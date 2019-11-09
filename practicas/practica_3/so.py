@@ -2,7 +2,11 @@
 
 from hardware import *
 import log
-
+TERMINATED = "TERMINATED"
+RUNNING = "RUNNING"
+READY = "READY"
+WAITING = "WAITING"
+NEW = "NEW"
 
 
 ## emulates a compiled program
@@ -97,7 +101,16 @@ class KillInterruptionHandler(AbstractInterruptionHandler):
 
     def execute(self, irq):
         log.logger.info(" Program Finished ")
-        HARDWARE.cpu.pc = -1  ## dejamos el CPU IDLE
+        log.logger.info("readyQueue {}".format(self.kernel.ready))
+        procesoRunning = self.kernel.pcbTable1.pcbRunning()
+        if (procesoRunning != None):
+            procesoRunning.state = TERMINATED
+            self.kernel.dispatcher.save(procesoRunning)
+        if(len(self.kernel.ready) >= 1):
+            next_pcb = self.kernel.ready.pop(0)
+            self.kernel.dispatcher.load(next_pcb)
+        elif(self.kernel.pcbTable1.todosPCBsTerminados()):##todos los procesos de pcbTable estan terminados
+            HARDWARE.switchOff()
 
 class IoInInterruptionHandler(AbstractInterruptionHandler):
 
@@ -121,6 +134,10 @@ class IoOutInterruptionHandler(AbstractInterruptionHandler):
 class Kernel():
 
     def __init__(self):
+        self.loader = Loader()
+        self.pcbTable1 = PCBTable()
+        self.ready = []
+        self.dispatcher = Dispatcher()
         ## setup interruption handlers
         killHandler = KillInterruptionHandler(self)
         HARDWARE.interruptVector.register(KILL_INTERRUPTION_TYPE, killHandler)
@@ -139,22 +156,106 @@ class Kernel():
     def ioDeviceController(self):
         return self._ioDeviceController
 
-    def load_program(self, program):
-        # loads the program in main memory
-        progSize = len(program.instructions)
-        for index in range(0, progSize):
-            inst = program.instructions[index]
-            HARDWARE.memory.write(index, inst)
-
     ## emulates a "system call" for programs execution
     def run(self, program):
-        self.load_program(program)
+        baseDir = self.loader.load(program)
+        pcb1 = PCB()
+        pcb1.pcb(program, baseDir)
+        self.pcbTable1.table(pcb1)
+        
+        if(self.pcbTable1.pcbRunning() != None):
+            self.ready.append(pcb1)
+            pcb1.state = READY
+        else:
+            self.dispatcher.load(pcb1)
+        
         log.logger.info("\n Executing program: {name}".format(name=program.name))
+        log.logger.info("\n Diccionario: {pcbTable}".format(pcbTable=pcb1))
         log.logger.info(HARDWARE)
 
-        # set CPU program counter at program's first intruction
-        HARDWARE.cpu.pc = 0
 
 
     def __repr__(self):
         return "Kernel "
+
+    def executeBatch(self, batch):
+        program = batch
+        for i in program:
+            self.run(i)
+
+
+class Loader():
+
+    def __init__(self):
+        self.indicePrograma = 0
+
+    def load(self, program):
+        progSize = len(program.instructions)
+        log.logger.info("\n Program Size antes de cargar: {size}".format(size=progSize))
+        log.logger.info("\n Indice de programa antes de cargar: {indice}".format(indice=self.indicePrograma))
+        for index in range(0, progSize):
+            inst = program.instructions[index]
+            HARDWARE.memory.write(index + self.indicePrograma, inst)       
+            log.logger.info("\n Cargando intruccion: programa: {} nroInst {} dir {} ints{}".format(program.name, index, index + self.indicePrograma,inst ))
+        
+        
+        self.indicePrograma += progSize
+        
+        log.logger.info("\n Indice de programa despues de cargar: {indice}".format(indice=self.indicePrograma))
+        log.logger.info("\n Program Size despues de cargar: {size}".format(size=progSize))
+        return (self.indicePrograma - progSize)
+
+class PCB():
+
+    def pcb(self, program, baseDir):
+        self.pid = 0
+        self.baseDir = baseDir
+        self.pc = 0
+        self.state = NEW
+        self.path = program.name
+
+
+    def __repr__(self):
+        return "pid {} baseDir {} pc {} state {} path {}".format(self.pid,self.baseDir,self.pc,self.state, self.path)
+
+class PCBTable():
+
+    def __init__(self):
+        self.PCBs = {}
+        self.pid = 0
+
+    def table(self, pcb):
+        self.PCBs[self.pid] = pcb
+        pcb.pid = self.pid
+        self.pid += 1
+        log.logger.info("PCB new PCB en PCB {} table {}".format(pcb, self))
+
+    def __repr__(self):
+        return tabulate(enumerate(self.PCBs), tablefmt='psql')
+
+    def pcbRunning(self):
+        for k, v in self.PCBs.items():
+            if (v.state == RUNNING):
+                return v
+            else:
+                return None
+
+
+    def todosPCBsTerminados(self):
+        log.logger.info("todos procesos terminados? PCBTable {}".format(self))
+        for k,v in self.PCBs.items():
+            if (v.state != TERMINATED):        
+                return False
+            return True
+    
+class Dispatcher():
+
+    def load(self, pcb):
+        HARDWARE.cpu.pc = pcb.pc
+        HARDWARE.mmu.baseDir = pcb.baseDir
+        pcb.state = RUNNING
+    
+    def save(self, pcb):
+        pcb.pc = HARDWARE.cpu.pc
+        HARDWARE.cpu.pc = -1
+  
