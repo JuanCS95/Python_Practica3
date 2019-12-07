@@ -180,9 +180,9 @@ class Kernel():
         
         #self.scheduler = FCFS(self)
         #self.scheduler = PrioridadNoExpropiativa(self)
-        self.scheduler = PrioridadExpropiativa(self)
-        #self.scheduler = RoundRobin(self)
-        #HARDWARE.timer.quantum = 3
+        #self.scheduler = PrioridadExpropiativa(self)
+        self.scheduler = RoundRobin(self)
+        HARDWARE.timer.quantum = 3
 
         self.dispatcher = Dispatcher()
         self.gantt = Gantt(self)
@@ -337,6 +337,12 @@ class ReadyQueue():
     def isEmpty(self):
         return len(self.readyQueue) == 0
 
+    def insertarOrdenado(self, pcb):
+        pcb.state = READY
+        index = 0
+        while index < len(self.readyQueue) and self.readyQueue[index].prioridad < pcb.prioridad:
+            index += 1
+        self.readyQueue.insert(index, pcb)
 class Waiting_Queue():
     def __init__(self):
         self.waitingQ = []
@@ -364,6 +370,12 @@ class Scheduler():
         self.kernel = kernel
 
     def add(self, pcb):
+        if(self.kernel.pcbTable.pcbRunning() == None):
+            self.kernel.dispatcher.load(pcb)
+        else:
+            self.addFromSon(pcb)
+            
+    def addFromSon(self, pcb):
         pass
 
     def nextPCB(self):
@@ -373,65 +385,36 @@ class Scheduler():
         return self.readyQ.isEmpty()
 
 class FCFS(Scheduler):
-
-    def add(self, pcb):
-        if(self.kernel.pcbTable.pcbRunning() == None):
-            self.kernel.dispatcher.load(pcb)
-        else:
-            self.readyQ.enqueue(pcb)
-
+        
+    def addFromSon(self, pcb):
+        self.readyQ.enqueue(pcb)
 
 class PrioridadNoExpropiativa(Scheduler):
-    def add(self, pcb):
-        if(self.kernel.pcbTable.pcbRunning() == None):
-            self.kernel.dispatcher.load(pcb)
-        else:
-            pcb.state = READY
-            index = 0
-            while len(self.readyQ.readyQueue) and self.readyQ.readyQueue[index].prioridad < pcb.prioridad:
-                index += 1
-                log.logger.info("prioridad del pcb {}".format(pcb.prioridad))
-            self.readyQ.readyQueue.insert(index, pcb)
 
+    def addFromSon(self, pcb):
+        self.readyQ.insertarOrdenado(pcb)
 class PrioridadExpropiativa(Scheduler):
 
-    def add(self, pcb):
+    def addFromSon(self, pcb):
         pcbRunning = self.kernel.pcbTable.pcbRunning()
-
-        if self.kernel.pcbTable.pcbRunning() == None:
-            self.kernel.dispatcher.load(pcb)
-        
-        elif pcbRunning.prioridad > pcb.prioridad:
+        if pcbRunning.prioridad > pcb.prioridad:
             self.kernel.dispatcher.save(pcbRunning)
-            self.insertarPCB(pcbRunning)
+            self.readyQ.insertarOrdenado(pcbRunning)
             self.kernel.dispatcher.load(pcb)
         
         else:
-            self.insertarPCB(pcb)
+            self.readyQ.insertarOrdenado(pcb)
         
-
-    def insertarPCB(self, pcb):
-        pcb.state = READY
-        index = 0
-        while len(self.readyQ.readyQueue) and self.readyQ.readyQueue[index].prioridad < pcb.prioridad:
-            index += 1
-            log.logger.info("prioridad del pcb {}".format(pcb.prioridad))
-        self.readyQ.readyQueue.insert(index, pcb)
-
 
 class RoundRobin(Scheduler):
 
-    def add(self, pcb):
-        if(self.kernel.pcbTable.pcbRunning() == None):
-            self.kernel.dispatcher.load(pcb)
-        else:
-            self.readyQ.enqueue(pcb)
-        
+    def addFromSon(self, pcb):
+        self.readyQ.enqueue(pcb)
+
     def expropiarPCB(self,pcb):
-        if len (self.readyQ.readyQueue) >= 1:
-            if(self.kernel.pcbTable.pcbRunning() != None):
-                pcbRunning = self.kernel.pcbTable.pcbRunning()
-                self.kernel.dispatcher.save(pcbRunning)
-                self.add(pcbRunning)
-                siguente=self.nextPCB()
-                self.kernel.dispatcher.load(siguente)
+        pcbRunning = self.kernel.pcbTable.pcbRunning()
+        if not self.isEmpty() and pcbRunning != None:
+            self.kernel.dispatcher.save(pcbRunning)
+            self.add(pcbRunning)
+            siguente=self.nextPCB()
+            self.kernel.dispatcher.load(siguente)
